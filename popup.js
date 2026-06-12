@@ -30,7 +30,8 @@ async function checkCurrentTab() {
     setStatus('Instagram detectado', true);
     // Si estamos en un perfil específico
     const match = tab.url.match(/instagram\.com\/([^\/\?]+)\/?$/);
-    if (match && !['explore','reels','stories','direct','accounts'].includes(match[1])) {
+    const NON_PROFILE = /^(explore|reels|stories|direct|accounts|p|reel|tv|live|ar|challenge)$/i;
+    if (match && !NON_PROFILE.test(match[1])) {
       document.getElementById('analyze-content').innerHTML = `
         <div class="empty-state">
           <div class="emoji">👤</div>
@@ -39,7 +40,8 @@ async function checkCurrentTab() {
           <br/>
           <button class="btn btn-primary btn-full" id="btn-analyze">🔍 Analizar este perfil</button>
         </div>`;
-      document.getElementById('btn-analyze')?.addEventListener('click', analyzeProfile);
+      // FIX: registrar el listener después de insertar el HTML
+      document.getElementById('btn-analyze').addEventListener('click', analyzeProfile);
     } else {
       document.getElementById('analyze-content').innerHTML = `
         <div class="empty-state">
@@ -68,6 +70,9 @@ function setupButtons() {
   document.getElementById('btn-export-csv').addEventListener('click', exportCSV);
   document.getElementById('btn-export-json').addEventListener('click', exportJSON);
   document.getElementById('btn-clear-all').addEventListener('click', clearAll);
+  // FIX: registrar btn-analyze del HTML inicial (empty-state original)
+  const btnAnalyze = document.getElementById('btn-analyze');
+  if (btnAnalyze) btnAnalyze.addEventListener('click', analyzeProfile);
 }
 
 // ─── Analyze Profile ─────────────────────────────────────────────────────────
@@ -169,16 +174,23 @@ async function analyzeFollowingBatch() {
   }
 }
 
-// Abre una pestaña en background, espera que cargue, extrae el perfil y la cierra
+// FIX: Abre una pestaña en background, espera que cargue, extrae el perfil y la cierra.
+// Se aumentó el delay y el timeout para mayor robustez, y se garantiza cierre del tab.
 function analyzeProfileInBackgroundTab(url) {
   return new Promise((resolve, reject) => {
     chrome.tabs.create({ url, active: false }, (newTab) => {
+      if (chrome.runtime.lastError) {
+        return reject(new Error(chrome.runtime.lastError.message));
+      }
       const tabId = newTab.id;
       let settled = false;
+      let safetyTimer = null;
 
       const cleanup = () => {
         chrome.tabs.onUpdated.removeListener(listener);
-        chrome.tabs.remove(tabId).catch(() => {});
+        if (safetyTimer) clearTimeout(safetyTimer);
+        // Cerrar la pestaña, ignorar error si ya fue cerrada
+        chrome.tabs.remove(tabId, () => { chrome.runtime.lastError; });
       };
 
       const finish = (fn) => {
@@ -189,23 +201,23 @@ function analyzeProfileInBackgroundTab(url) {
       };
 
       const listener = (updatedTabId, info) => {
-        if (updatedTabId === tabId && info.status === 'complete') {
-          // Pequeño delay para que el content script termine de renderizar el header
-          setTimeout(async () => {
-            try {
-              const result = await chrome.tabs.sendMessage(tabId, { action: 'EXTRACT_PROFILE' });
-              finish(() => resolve(result));
-            } catch (e) {
-              finish(() => reject(e));
-            }
-          }, 1500);
-        }
+        if (updatedTabId !== tabId || info.status !== 'complete') return;
+        // FIX: delay aumentado a 2500ms para dar tiempo al content script
+        // de ejecutarse y al DOM dinámico de Instagram de renderizarse
+        setTimeout(async () => {
+          try {
+            const result = await chrome.tabs.sendMessage(tabId, { action: 'EXTRACT_PROFILE' });
+            finish(() => resolve(result));
+          } catch (e) {
+            finish(() => reject(e));
+          }
+        }, 2500);
       };
 
       chrome.tabs.onUpdated.addListener(listener);
 
-      // Timeout de seguridad
-      setTimeout(() => finish(() => reject(new Error('timeout'))), 15000);
+      // FIX: Timeout aumentado a 20s para conexiones lentas
+      safetyTimer = setTimeout(() => finish(() => reject(new Error('timeout'))), 20000);
     });
   });
 }
@@ -232,14 +244,18 @@ function renderFollowingResults(results) {
 
   const sorted = [...results].sort((a, b) => b.score - a.score);
 
+  // FIX: No usar onclick inline con datos sin escapar — usar data-attributes y
+  // event delegation para evitar XSS por URLs/usernames con caracteres especiales
   container.innerHTML = `
     <div class="section-title" style="margin-top:14px">Mejores prospectos entre sus seguidos (${results.length} analizados)</div>
-    <div class="prospectos-list scrollable">
+    <div class="prospectos-list scrollable" id="following-list">
       ${sorted.map(p => `
-        <div class="prospecto-item" data-username="${p.username}">
+        <div class="prospecto-item"
+             data-username="${escapeAttr(p.username)}"
+             data-profile-url="${escapeAttr(p.profileUrl || '')}">
           <div class="prospecto-avatar">👤</div>
           <div class="prospecto-info">
-            <div class="prospecto-username">@${p.username}</div>
+            <div class="prospecto-username">@${escapeHTML(p.username)}</div>
             <div class="prospecto-meta">
               ${formatNum(p.followers)} seguidores · ${p.posts || 0} posts
               ${p.emailInBio ? ' · ✉️' : ''}
@@ -250,12 +266,25 @@ function renderFollowingResults(results) {
             ${p.score}
           </div>
           <div class="prospecto-actions">
-            <button class="btn-icon" title="Abrir perfil" onclick="window.open('${p.profileUrl}', '_blank')">↗</button>
-            <button class="btn-icon" title="Guardar como prospecto" onclick="saveFromFollowingResults('${p.username}')">⚡</button>
+            <button class="btn-icon btn-open-profile" title="Abrir perfil">↗</button>
+            <button class="btn-icon btn-save-following" title="Guardar como prospecto">⚡</button>
           </div>
         </div>
       `).join('')}
     </div>`;
+
+  // FIX: Event delegation — un solo listener, sin onclick inline
+  document.getElementById('following-list').addEventListener('click', e => {
+    const item = e.target.closest('.prospecto-item');
+    if (!item) return;
+    const username = item.dataset.username;
+    const profileUrl = item.dataset.profileUrl;
+    if (e.target.closest('.btn-open-profile')) {
+      if (profileUrl) chrome.tabs.create({ url: profileUrl });
+    } else if (e.target.closest('.btn-save-following')) {
+      saveFromFollowingResults(username);
+    }
+  });
 
   // Guardamos los resultados en memoria para poder guardarlos individualmente
   window.__followingResults = sorted;
@@ -308,32 +337,39 @@ function renderProfileResult(profile, analysis) {
   const signalsHTML = analysis.signals.map(s => `
     <div class="signal ${s.type}">
       <div class="signal-dot"></div>
-      <span>${s.label}</span>
+      <span>${escapeHTML(s.label)}</span>
     </div>
   `).join('');
 
-  const bioShort = profile.bio
-      ? profile.bio.replace(/^\d+[\w,. ]+(Followers?|Following|Posts?)[,\s]+[\d]+[\w,. ]+(Followers?|Following|Posts?)[,\s]+[\d]+[\w,.]*\s*(Followers?|Following|Posts?)[.\s]*/i, '').trim().slice(0, 180)
-      : '';
+  // FIX: limpiar bio de forma más robusta, sin regex complejo propenso a errores
+  let bioShort = '';
+  if (profile.bio) {
+    // Quitar el bloque de stats que Instagram antepone (e.g. "45K Followers, 200 Following, 30 Posts - ...")
+    bioShort = profile.bio
+        .replace(/^[\d.,KkMmBb\s]+(Followers?|Following|Posts?|Publicaciones?|Seguidores?|Siguiendo)[,\s·-]+/gi, '')
+        .trim()
+        .slice(0, 180);
+  }
 
   const insightMsg = getInsightMessage(profile, analysis);
 
+  // FIX: usar escapeHTML en datos del perfil para evitar XSS en el HTML generado
   document.getElementById('analyze-content').innerHTML = `
     <div class="scrollable">
       <div class="profile-card">
         <div class="profile-header">
           <div class="profile-avatar">
             ${profile.profilePic
-      ? `<img src="${profile.profilePic}" alt="avatar" onerror="this.parentNode.innerHTML='👤'" />`
+      ? `<img src="${escapeAttr(profile.profilePic)}" alt="avatar" onerror="this.parentNode.innerHTML='👤'" />`
       : '👤'}
           </div>
           <div class="profile-info">
             <div class="profile-username">
-              @${profile.username}
+              @${escapeHTML(profile.username)}
               ${profile.isVerified ? '<span class="verified-badge">✓ Verificado</span>' : ''}
             </div>
-            ${profile.fullName ? `<div class="profile-name">${profile.fullName}</div>` : ''}
-            ${profile.category ? `<span class="profile-category">${profile.category}</span>` : ''}
+            ${profile.fullName ? `<div class="profile-name">${escapeHTML(profile.fullName)}</div>` : ''}
+            ${profile.category ? `<span class="profile-category">${escapeHTML(profile.category)}</span>` : ''}
           </div>
         </div>
 
@@ -354,16 +390,16 @@ function renderProfileResult(profile, analysis) {
 
         ${bioShort ? `
         <div class="bio-section">
-          <div class="bio-text">${bioShort}</div>
-          ${profile.externalLink ? `<a class="external-link" href="${profile.externalLink}" target="_blank">🔗 ${profile.externalLink.replace(/^https?:\/\//, '').slice(0, 40)}</a>` : ''}
-          ${profile.emailInBio ? `<div style="font-size:11px;color:#34d399;margin-top:4px;">✉️ ${profile.emailInBio}</div>` : ''}
+          <div class="bio-text">${escapeHTML(bioShort)}</div>
+          ${profile.externalLink ? `<a class="external-link" href="${escapeAttr(profile.externalLink)}" target="_blank" rel="noopener noreferrer">🔗 ${escapeHTML(profile.externalLink.replace(/^https?:\/\//, '').slice(0, 40))}</a>` : ''}
+          ${profile.emailInBio ? `<div style="font-size:11px;color:#34d399;margin-top:4px;">✉️ ${escapeHTML(profile.emailInBio)}</div>` : ''}
         </div>` : ''}
       </div>
 
       <div class="score-section">
         <div class="score-header">
           <span class="score-label">Score de Prospecto</span>
-          <span class="score-tier" style="background:${tierColor}22;color:${tierColor};border:1px solid ${tierColor}44">${analysis.tier}</span>
+          <span class="score-tier" style="background:${tierColor}22;color:${tierColor};border:1px solid ${tierColor}44">${escapeHTML(analysis.tier)}</span>
         </div>
         <div class="score-bar-bg">
           <div class="score-bar-fill" style="width:${analysis.score}%"></div>
@@ -379,7 +415,7 @@ function renderProfileResult(profile, analysis) {
       ${insightMsg ? `
       <div class="insight-box">
         <div class="insight-header">✨ Insight de Growth</div>
-        <div class="insight-text">${insightMsg}</div>
+        <div class="insight-text">${escapeHTML(insightMsg)}</div>
       </div>` : ''}
 
       <div class="actions">
@@ -391,7 +427,7 @@ function renderProfileResult(profile, analysis) {
         <button class="btn btn-secondary btn-full" id="btn-analyze-following">🚀 Analizar sus seguidos (buscar mejores prospectos)</button>
       </div>
       <p style="font-size:11px;color:var(--text-muted);margin-top:6px;line-height:1.4">
-        Abre la lista de <strong>"seguidos"</strong> de @${profile.username} (haciendo clic en "following" en su perfil) y luego presiona el botón. Vamos a analizar cada cuenta y ordenarlas por potencial.
+        Abre la lista de <strong>"seguidos"</strong> de @${escapeHTML(profile.username)} (haciendo clic en "following" en su perfil) y luego presiona el botón. Vamos a analizar cada cuenta y ordenarlas por potencial.
       </p>
 
       <div id="following-results"></div>
@@ -486,17 +522,20 @@ function renderProspectsList() {
 
   const sorted = [...prospects].sort((a, b) => b.score - a.score);
 
+  // FIX: usar data-attributes + event delegation en lugar de onclick inline
   container.innerHTML = `
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
       <div class="section-title" style="margin-bottom:0;flex:1">Lista de prospectos</div>
       <span style="font-size:11px;color:var(--text-muted)">${prospects.length} total</span>
     </div>
-    <div class="prospectos-list scrollable">
+    <div class="prospectos-list scrollable" id="prospects-list">
       ${sorted.map(p => `
-        <div class="prospecto-item" data-username="${p.username}">
+        <div class="prospecto-item"
+             data-username="${escapeAttr(p.username)}"
+             data-profile-url="${escapeAttr(p.profileUrl || '')}">
           <div class="prospecto-avatar">👤</div>
           <div class="prospecto-info">
-            <div class="prospecto-username">@${p.username}</div>
+            <div class="prospecto-username">@${escapeHTML(p.username)}</div>
             <div class="prospecto-meta">
               ${formatNum(p.followers)} seguidores · ${p.posts || 0} posts · ratio ${p.ratio}x
               ${p.emailInBio ? ' · ✉️' : ''}
@@ -507,12 +546,25 @@ function renderProspectsList() {
             ${p.score}
           </div>
           <div class="prospecto-actions">
-            <button class="btn-icon" title="Abrir perfil" onclick="window.open('${p.profileUrl}', '_blank')">↗</button>
-            <button class="btn-icon" title="Eliminar" onclick="removeProspect('${p.username}')">✕</button>
+            <button class="btn-icon btn-open-profile" title="Abrir perfil">↗</button>
+            <button class="btn-icon btn-remove-prospect" title="Eliminar">✕</button>
           </div>
         </div>
       `).join('')}
     </div>`;
+
+  // FIX: Event delegation
+  document.getElementById('prospects-list').addEventListener('click', e => {
+    const item = e.target.closest('.prospecto-item');
+    if (!item) return;
+    const username = item.dataset.username;
+    const profileUrl = item.dataset.profileUrl;
+    if (e.target.closest('.btn-open-profile')) {
+      if (profileUrl) chrome.tabs.create({ url: profileUrl });
+    } else if (e.target.closest('.btn-remove-prospect')) {
+      removeProspect(username);
+    }
+  });
 }
 
 // ─── Remove Prospect ──────────────────────────────────────────────────────────
@@ -546,9 +598,11 @@ function exportCSV() {
   };
 
   const rows = prospects.map(p => headers.map(h => escapeCSV(p[h])).join(','));
-  const csv = [headers.join(','), ...rows].join('\n');
+  // FIX: añadir BOM UTF-8 para que Excel (Windows) detecte correctamente el encoding
+  const BOM = '\uFEFF';
+  const csv = BOM + [headers.join(','), ...rows].join('\n');
 
-  downloadFile(csv, `ig-prospectos-${formatDate()}.csv`, 'text/csv');
+  downloadFile(csv, `ig-prospectos-${formatDate()}.csv`, 'text/csv;charset=utf-8');
   showToast(`✓ Exportados ${prospects.length} prospectos`);
 }
 
@@ -620,4 +674,23 @@ function showToast(msg) {
   `;
   document.body.appendChild(t);
   setTimeout(() => t.remove(), 2200);
+}
+
+// ─── HTML/Attr Escape helpers (prevención de XSS) ─────────────────────────────
+function escapeHTML(str) {
+  if (str === null || str === undefined) return '';
+  return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+}
+
+function escapeAttr(str) {
+  if (str === null || str === undefined) return '';
+  return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
 }
