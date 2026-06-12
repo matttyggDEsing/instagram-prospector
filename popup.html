@@ -1,0 +1,536 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>IG Growth Prospector</title>
+  <style>
+    :root {
+      --bg: #0a0a0f;
+      --surface: #13131a;
+      --surface2: #1c1c26;
+      --border: #2a2a38;
+      --accent: #8b5cf6;
+      --accent2: #06b6d4;
+      --accent-glow: rgba(139, 92, 246, 0.25);
+      --hot: #ff4545;
+      --warm: #ff8c00;
+      --lukewarm: #f0c040;
+      --cold: #7fb3d3;
+      --text: #e8e8f0;
+      --text-muted: #7878a0;
+      --text-dim: #4a4a68;
+      --positive: #34d399;
+      --negative: #f87171;
+      --warning: #fbbf24;
+      --radius: 10px;
+      --radius-sm: 6px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      width: 420px;
+      min-height: 560px;
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-size: 13px;
+      overflow-x: hidden;
+    }
+
+    /* ── Header ────────────────────────────────────────── */
+    .header {
+      background: linear-gradient(135deg, #1a0a2e 0%, #0d1117 50%, #0a1628 100%);
+      border-bottom: 1px solid var(--border);
+      padding: 14px 16px 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: relative;
+      overflow: hidden;
+    }
+    .header::after {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, var(--accent), var(--accent2), transparent);
+    }
+    .header-left { display: flex; align-items: center; gap: 10px; }
+    .logo {
+      width: 32px; height: 32px;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 16px;
+    }
+    .header h1 {
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      color: var(--text);
+    }
+    .header h1 span { color: var(--accent); }
+    .header-badge {
+      font-size: 10px;
+      color: var(--text-muted);
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      padding: 2px 7px;
+      border-radius: 20px;
+    }
+
+    /* ── Tabs ───────────────────────────────────────────── */
+    .tabs {
+      display: flex;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+    }
+    .tab {
+      flex: 1;
+      padding: 10px;
+      text-align: center;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-muted);
+      cursor: pointer;
+      border: none;
+      background: transparent;
+      border-bottom: 2px solid transparent;
+      transition: all 0.2s;
+      letter-spacing: 0.03em;
+    }
+    .tab.active {
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+      background: rgba(139, 92, 246, 0.05);
+    }
+    .tab:hover:not(.active) { color: var(--text); background: var(--surface2); }
+
+    /* ── Content ────────────────────────────────────────── */
+    .content { padding: 14px 16px; }
+    .panel { display: none; }
+    .panel.active { display: block; }
+
+    /* ── Profile Card ───────────────────────────────────── */
+    .profile-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px;
+      margin-bottom: 12px;
+      position: relative;
+      overflow: hidden;
+    }
+    .profile-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 2px;
+      background: linear-gradient(90deg, var(--accent), var(--accent2));
+    }
+    .profile-header { display: flex; align-items: flex-start; gap: 12px; }
+    .profile-avatar {
+      width: 48px; height: 48px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      display: flex; align-items: center; justify-content: center;
+      font-size: 20px;
+      flex-shrink: 0;
+      overflow: hidden;
+    }
+    .profile-avatar img { width: 100%; height: 100%; object-fit: cover; }
+    .profile-info { flex: 1; min-width: 0; }
+    .profile-username {
+      font-size: 15px; font-weight: 700;
+      color: var(--text);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .profile-name {
+      font-size: 12px; color: var(--text-muted); margin-top: 2px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .profile-category {
+      display: inline-block;
+      margin-top: 4px;
+      font-size: 10px;
+      padding: 2px 7px;
+      border-radius: 12px;
+      background: rgba(6, 182, 212, 0.15);
+      color: var(--accent2);
+      border: 1px solid rgba(6, 182, 212, 0.3);
+    }
+    .verified-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      font-size: 10px;
+      color: #60a5fa;
+      margin-left: 4px;
+    }
+
+    /* ── Stats Row ──────────────────────────────────────── */
+    .stats-row {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      margin: 12px 0;
+    }
+    .stat-box {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 8px;
+      text-align: center;
+    }
+    .stat-num {
+      font-size: 16px; font-weight: 700;
+      color: var(--text);
+      line-height: 1.2;
+    }
+    .stat-label { font-size: 10px; color: var(--text-muted); margin-top: 2px; }
+
+    /* ── Score ──────────────────────────────────────────── */
+    .score-section {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 12px;
+      margin-bottom: 12px;
+    }
+    .score-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+    .score-label { font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.08em; }
+    .score-tier {
+      font-size: 13px; font-weight: 700;
+      padding: 3px 10px; border-radius: 20px;
+    }
+    .score-bar-bg {
+      height: 8px;
+      background: var(--border);
+      border-radius: 4px;
+      overflow: hidden;
+      margin-bottom: 6px;
+    }
+    .score-bar-fill {
+      height: 100%;
+      border-radius: 4px;
+      transition: width 0.5s ease;
+      background: linear-gradient(90deg, var(--accent), var(--accent2));
+    }
+    .score-num {
+      text-align: right;
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    /* ── Signals ────────────────────────────────────────── */
+    .signals-list { display: flex; flex-direction: column; gap: 5px; }
+    .signal {
+      display: flex; align-items: center; gap: 7px;
+      padding: 5px 8px;
+      border-radius: var(--radius-sm);
+      font-size: 11px;
+    }
+    .signal.positive { background: rgba(52, 211, 153, 0.08); color: var(--positive); }
+    .signal.negative { background: rgba(248, 113, 113, 0.08); color: var(--negative); }
+    .signal.warning  { background: rgba(251, 191, 36, 0.08); color: var(--warning); }
+    .signal.neutral  { background: rgba(120, 120, 160, 0.08); color: var(--text-muted); }
+    .signal-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+    .positive .signal-dot { background: var(--positive); }
+    .negative .signal-dot { background: var(--negative); }
+    .warning  .signal-dot { background: var(--warning); }
+    .neutral  .signal-dot { background: var(--text-muted); }
+
+    /* ── Bio / Link ─────────────────────────────────────── */
+    .bio-section {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 10px 12px;
+      margin-bottom: 12px;
+    }
+    .bio-text {
+      font-size: 11px;
+      color: var(--text-muted);
+      line-height: 1.5;
+      margin-bottom: 6px;
+    }
+    .external-link {
+      font-size: 11px;
+      color: var(--accent2);
+      text-decoration: none;
+      display: flex; align-items: center; gap: 4px;
+    }
+    .external-link:hover { text-decoration: underline; }
+
+    /* ── Buttons ────────────────────────────────────────── */
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+      padding: 8px 14px;
+      border-radius: var(--radius-sm);
+      font-size: 12px; font-weight: 600;
+      cursor: pointer;
+      border: none;
+      transition: all 0.2s;
+      letter-spacing: 0.02em;
+    }
+    .btn-primary {
+      background: linear-gradient(135deg, var(--accent), #7c3aed);
+      color: white;
+      box-shadow: 0 0 12px var(--accent-glow);
+    }
+    .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 0 20px var(--accent-glow); }
+    .btn-secondary {
+      background: var(--surface2);
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+    .btn-secondary:hover { border-color: var(--accent); color: var(--accent); }
+    .btn-danger {
+      background: rgba(248, 113, 113, 0.1);
+      color: var(--negative);
+      border: 1px solid rgba(248, 113, 113, 0.3);
+    }
+    .btn-danger:hover { background: rgba(248, 113, 113, 0.2); }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+    .btn-full { width: 100%; }
+
+    .btn-row { display: flex; gap: 8px; margin-bottom: 12px; }
+
+    /* ── Action buttons ─────────────────────────────────── */
+    .actions {
+      display: flex; gap: 8px; margin-top: 4px;
+    }
+
+    /* ── Prospecto item ─────────────────────────────────── */
+    .prospectos-list { display: flex; flex-direction: column; gap: 8px; }
+    .prospecto-item {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 10px 12px;
+      display: flex; align-items: center; gap: 10px;
+      transition: border-color 0.2s;
+    }
+    .prospecto-item:hover { border-color: var(--accent); }
+    .prospecto-avatar {
+      width: 36px; height: 36px; border-radius: 50%;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      display: flex; align-items: center; justify-content: center;
+      font-size: 14px; flex-shrink: 0;
+    }
+    .prospecto-info { flex: 1; min-width: 0; }
+    .prospecto-username {
+      font-size: 13px; font-weight: 600;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .prospecto-meta { font-size: 10px; color: var(--text-muted); margin-top: 2px; }
+    .prospecto-score {
+      font-size: 12px; font-weight: 700;
+      padding: 3px 8px; border-radius: 12px;
+      flex-shrink: 0;
+    }
+    .prospecto-actions { display: flex; gap: 5px; flex-shrink: 0; }
+    .btn-icon {
+      width: 28px; height: 28px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: var(--surface2);
+      color: var(--text-muted);
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 13px;
+      transition: all 0.15s;
+    }
+    .btn-icon:hover { border-color: var(--accent); color: var(--accent); }
+
+    /* ── Empty state ────────────────────────────────────── */
+    .empty-state {
+      text-align: center;
+      padding: 32px 16px;
+      color: var(--text-muted);
+    }
+    .empty-state .emoji { font-size: 36px; margin-bottom: 10px; }
+    .empty-state h3 { font-size: 14px; color: var(--text); margin-bottom: 6px; }
+    .empty-state p { font-size: 12px; line-height: 1.5; }
+
+    /* ── Status bar ─────────────────────────────────────── */
+    .status-bar {
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      padding: 8px 16px;
+      display: flex; align-items: center; justify-content: space-between;
+      font-size: 11px; color: var(--text-muted);
+    }
+    .status-dot {
+      width: 6px; height: 6px; border-radius: 50%;
+      background: var(--text-dim);
+      display: inline-block; margin-right: 5px;
+    }
+    .status-dot.active { background: var(--positive); box-shadow: 0 0 5px var(--positive); }
+    .status-dot.loading { background: var(--warning); animation: pulse 1s infinite; }
+
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+    /* ── Loader ─────────────────────────────────────────── */
+    .loader {
+      text-align: center; padding: 24px;
+      color: var(--text-muted); font-size: 12px;
+    }
+    .spinner {
+      width: 24px; height: 24px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      margin: 0 auto 10px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Section titles ─────────────────────────────────── */
+    .section-title {
+      font-size: 11px; font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase; letter-spacing: 0.08em;
+      margin-bottom: 8px;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .section-title::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: var(--border);
+    }
+
+    /* ── Not Instagram banner ───────────────────────────── */
+    .not-ig {
+      text-align: center; padding: 40px 20px;
+    }
+    .not-ig .icon { font-size: 40px; margin-bottom: 12px; }
+    .not-ig h2 { font-size: 15px; margin-bottom: 8px; }
+    .not-ig p { font-size: 12px; color: var(--text-muted); line-height: 1.6; }
+
+    /* ── Export section ─────────────────────────────────── */
+    .export-section {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 12px;
+      margin-bottom: 12px;
+    }
+    .export-info {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 10px;
+    }
+    .export-count {
+      font-size: 22px; font-weight: 800;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .export-label { font-size: 11px; color: var(--text-muted); }
+
+    /* ── AI Insight box ─────────────────────────────────── */
+    .insight-box {
+      background: linear-gradient(135deg, rgba(139,92,246,0.08), rgba(6,182,212,0.08));
+      border: 1px solid rgba(139,92,246,0.25);
+      border-radius: var(--radius);
+      padding: 10px 12px;
+      margin-bottom: 12px;
+    }
+    .insight-header {
+      display: flex; align-items: center; gap: 6px;
+      font-size: 11px; font-weight: 600; color: var(--accent);
+      margin-bottom: 5px;
+    }
+    .insight-text { font-size: 11px; color: var(--text-muted); line-height: 1.6; }
+
+    .scrollable { max-height: 340px; overflow-y: auto; }
+    .scrollable::-webkit-scrollbar { width: 4px; }
+    .scrollable::-webkit-scrollbar-track { background: var(--bg); }
+    .scrollable::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+  </style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-left">
+    <div class="logo">📊</div>
+    <div>
+      <h1>IG <span>Growth</span> Prospector</h1>
+    </div>
+  </div>
+  <span class="header-badge">v1.0</span>
+</div>
+
+<div class="tabs">
+  <button class="tab active" data-tab="analyze">🔍 Analizar</button>
+  <button class="tab" data-tab="prospects">⚡ Prospectos</button>
+  <button class="tab" data-tab="export">📤 Exportar</button>
+</div>
+
+<div class="content">
+
+  <!-- ── TAB: ANALYZE ─────────────────────────────────── -->
+  <div class="panel active" id="tab-analyze">
+    <div id="analyze-content">
+      <div class="empty-state">
+        <div class="emoji">📸</div>
+        <h3>Abre un perfil de Instagram</h3>
+        <p>Navega a cualquier perfil público en instagram.com y presiona <strong>Analizar Perfil</strong></p>
+        <br/>
+        <button class="btn btn-primary btn-full" id="btn-analyze">🔍 Analizar Perfil</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── TAB: PROSPECTS ───────────────────────────────── -->
+  <div class="panel" id="tab-prospects">
+    <div id="prospects-content">
+      <div class="empty-state">
+        <div class="emoji">🎯</div>
+        <h3>Sin prospectos aún</h3>
+        <p>Analiza perfiles y guárdalos aquí para armar tu lista de prospectos.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── TAB: EXPORT ──────────────────────────────────── -->
+  <div class="panel" id="tab-export">
+    <div id="export-content">
+      <div class="export-section">
+        <div class="export-info">
+          <div>
+            <div class="export-count" id="export-count">0</div>
+            <div class="export-label">prospectos guardados</div>
+          </div>
+          <div style="font-size: 32px;">📋</div>
+        </div>
+        <div class="btn-row">
+          <button class="btn btn-primary" id="btn-export-csv" style="flex:1">⬇️ Exportar CSV</button>
+          <button class="btn btn-secondary" id="btn-export-json" style="flex:1">⬇️ JSON</button>
+        </div>
+        <button class="btn btn-danger btn-full" id="btn-clear-all">🗑️ Limpiar lista</button>
+      </div>
+
+      <div class="section-title">Columnas del CSV</div>
+      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px;font-size:10px;color:var(--text-muted);line-height:1.8;">
+        username · fullName · followers · following · posts · ratio · score · tier · isVerified · emailInBio · externalLink · category · bio · profileUrl · scrapedAt
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<div class="status-bar">
+  <div>
+    <span class="status-dot" id="status-dot"></span>
+    <span id="status-text">Listo</span>
+  </div>
+  <span id="prospects-count">0 prospectos</span>
+</div>
+
+<script src="popup.js"></script>
+</body>
+</html>
