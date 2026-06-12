@@ -19,15 +19,85 @@
   // ─── Parser de números con sufijos (1.2M, 45.3K, etc.) ───────────────────
   function parseNumber(str) {
     if (!str) return 0;
-    str = str.replace(/,/g, '').trim();
-    const match = str.match(/([\d.]+)\s*([KkMmBb]?)/);
-    if (!match) return parseInt(str) || 0;
-    let num = parseFloat(match[1]);
-    const suffix = match[2].toUpperCase();
-    if (suffix === 'K') num *= 1000;
-    if (suffix === 'M') num *= 1000000;
-    if (suffix === 'B') num *= 1000000000;
-    return Math.round(num);
+    str = String(str).trim();
+
+    // Si tiene sufijo K/M/B, el punto/coma es decimal -> usar parseFloat directo
+    const suffixMatch = str.match(/([\d.,]+)\s*([KkMmBb])\b/);
+    if (suffixMatch) {
+      const num = parseFloat(suffixMatch[1].replace(',', '.'));
+      const suffix = suffixMatch[2].toUpperCase();
+      let mult = 1;
+      if (suffix === 'K') mult = 1000;
+      if (suffix === 'M') mult = 1000000;
+      if (suffix === 'B') mult = 1000000000;
+      return Math.round(num * mult);
+    }
+
+    // Sin sufijo: los puntos y comas son separadores de miles (formatos en/es)
+    const plain = str.match(/[\d.,]+/);
+    if (!plain) return parseInt(str) || 0;
+    const cleaned = plain[0].replace(/[.,]/g, '');
+    return parseInt(cleaned) || 0;
+  }
+
+  // ─── Extracción de stats (followers/following/posts) desde el header ─────
+  // Soporta inglés y español (Instagram muestra el idioma según el navegador)
+  const STAT_KEYWORDS = {
+    followers: /follower|seguidor/i,
+    following: /following|siguiendo/i,
+    posts: /post|publicaci/i
+  };
+
+  function getStatsFromHeader() {
+    const result = {};
+    // Estructura típica: header section ul li
+    const items = document.querySelectorAll('header section ul li, header ul li, main header ul li');
+    items.forEach(item => {
+      const fullText = item.innerText.trim();
+      if (!fullText) return;
+
+      // Preferir el atributo title del span interno (suele tener el número exacto, sin abreviar)
+      const titledSpan = item.querySelector('span[title]');
+      const numberSource = (titledSpan && titledSpan.getAttribute('title')) || fullText;
+
+      let key = null;
+      if (STAT_KEYWORDS.followers.test(fullText)) key = 'followers';
+      else if (STAT_KEYWORDS.following.test(fullText)) key = 'following';
+      else if (STAT_KEYWORDS.posts.test(fullText)) key = 'posts';
+
+      if (key && result[key] === undefined) {
+        result[key] = parseNumber(numberSource);
+      }
+    });
+    return result;
+  }
+
+  // ─── Extracción de stats desde el og:description (inglés y español) ──────
+  function getStatsFromMeta(ogDesc) {
+    if (!ogDesc) return null;
+
+    // Captura hasta 3 segmentos del tipo "<numero+sufijo> <palabra>"
+    const segments = ogDesc.match(/([\d.,]+\s*[KkMmBb]?)\s*([A-Za-zÁÉÍÓÚáéíóúñÑ]+)/g);
+    if (!segments) return null;
+
+    const result = {};
+    segments.forEach(seg => {
+      const m = seg.match(/([\d.,]+\s*[KkMmBb]?)\s*([A-Za-zÁÉÍÓÚáéíóúñÑ]+)/);
+      if (!m) return;
+      const numStr = m[1];
+      const word = m[2];
+      let key = null;
+      if (STAT_KEYWORDS.followers.test(word)) key = 'followers';
+      else if (STAT_KEYWORDS.following.test(word)) key = 'following';
+      else if (STAT_KEYWORDS.posts.test(word)) key = 'posts';
+      if (key && result[key] === undefined) {
+        result[key] = parseNumber(numStr);
+      }
+    });
+
+    return (result.followers !== undefined || result.following !== undefined || result.posts !== undefined)
+      ? result
+      : null;
   }
 
   // ─── Extracción del perfil ─────────────────────────────────────────────────
@@ -45,23 +115,20 @@
     const ogDesc = getMeta('og:description') || '';
     data.bio = ogDesc;
 
-    // Intentar extraer stats desde el og:description
-    // Formato típico: "X Followers, Y Following, Z Posts"
-    const statsMatch = ogDesc.match(/([\d,.]+[KkMm]?)\s*Followers?[,\s]+([\d,.]+[KkMm]?)\s*Following[,\s]+([\d,.]+[KkMm]?)\s*Posts?/i);
-    if (statsMatch) {
-      data.followers = parseNumber(statsMatch[1]);
-      data.following = parseNumber(statsMatch[2]);
-      data.posts = parseNumber(statsMatch[3]);
-    } else {
-      // Fallback: buscar en el DOM
-      const statEls = document.querySelectorAll('ul li');
-      statEls.forEach(li => {
-        const text = li.innerText;
-        if (/followers/i.test(text)) data.followers = parseNumber(text);
-        if (/following/i.test(text)) data.following = parseNumber(text);
-        if (/posts/i.test(text)) data.posts = parseNumber(text);
-      });
-    }
+    // Intentar extraer stats: primero del header (DOM, más confiable y siempre
+    // disponible en el idioma actual), luego del og:description como fallback.
+    const headerStats = getStatsFromHeader();
+    const metaStats = getStatsFromMeta(ogDesc);
+
+    data.followers = (headerStats.followers !== undefined) ? headerStats.followers
+                    : (metaStats && metaStats.followers !== undefined) ? metaStats.followers
+                    : 0;
+    data.following = (headerStats.following !== undefined) ? headerStats.following
+                    : (metaStats && metaStats.following !== undefined) ? metaStats.following
+                    : 0;
+    data.posts = (headerStats.posts !== undefined) ? headerStats.posts
+                    : (metaStats && metaStats.posts !== undefined) ? metaStats.posts
+                    : 0;
 
     // Imagen de perfil
     data.profilePic = getMeta('og:image') || null;
@@ -224,3 +291,5 @@
   });
 
 })();
+
+

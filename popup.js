@@ -103,7 +103,188 @@ async function analyzeProfile() {
   }
 }
 
-// ─── Render Profile Result ────────────────────────────────────────────────────
+// ─── Analyze Following List (buscar mejores prospectos) ──────────────────────
+const tierColorsGlobal = {
+  'HOT 🔥': '#ff4545',
+  'WARM ✨': '#ff8c00',
+  'LUKEWARM 👀': '#f0c040',
+  'COLD ❄️': '#7fb3d3'
+};
+
+const MAX_FOLLOWING_TO_ANALYZE = 25; // límite para no tardar/abusar demasiado
+
+async function analyzeFollowingBatch() {
+  const container = document.getElementById('following-results');
+  const btn = document.getElementById('btn-analyze-following');
+
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+
+    // 1. Pedir al content script la lista de usuarios del diálogo abierto
+    const listResult = await chrome.tabs.sendMessage(tab.id, { action: 'EXTRACT_FOLLOWERS_LIST' });
+    const users = listResult?.users || [];
+
+    if (users.length === 0) {
+      container.innerHTML = `
+        <div class="empty-state" style="padding:16px 8px">
+          <div class="emoji">⚠️</div>
+          <p>No encontré una lista abierta. Abrí el diálogo de <strong>"following"</strong> en el perfil de Instagram (sin cerrarlo) y volvé a presionar el botón.</p>
+        </div>`;
+      return;
+    }
+
+    btn.disabled = true;
+    const toAnalyze = users.slice(0, MAX_FOLLOWING_TO_ANALYZE);
+    const results = [];
+
+    for (let i = 0; i < toAnalyze.length; i++) {
+      const user = toAnalyze[i];
+      btn.textContent = `⏳ Analizando ${i + 1}/${toAnalyze.length}: @${user.username}`;
+      container.innerHTML = `<div class="loader"><div class="spinner"></div>Analizando @${user.username} (${i + 1}/${toAnalyze.length})...</div>`;
+
+      try {
+        const data = await analyzeProfileInBackgroundTab(user.profileUrl);
+        if (data?.profile?.username) {
+          results.push({ ...data.profile, score: data.analysis.score, tier: data.analysis.tier });
+        }
+      } catch (e) {
+        // Si falla un perfil (privado, eliminado, etc.) lo saltamos
+        console.warn('No se pudo analizar', user.username, e);
+      }
+    }
+
+    btn.disabled = false;
+    btn.textContent = '🚀 Analizar sus seguidos (buscar mejores prospectos)';
+
+    renderFollowingResults(results);
+
+  } catch (err) {
+    container.innerHTML = `
+      <div class="empty-state" style="padding:16px 8px">
+        <div class="emoji">⚠️</div>
+        <p>Error: ${err.message || err}</p>
+      </div>`;
+    btn.disabled = false;
+    btn.textContent = '🚀 Analizar sus seguidos (buscar mejores prospectos)';
+  }
+}
+
+// Abre una pestaña en background, espera que cargue, extrae el perfil y la cierra
+function analyzeProfileInBackgroundTab(url) {
+  return new Promise((resolve, reject) => {
+    chrome.tabs.create({ url, active: false }, (newTab) => {
+      const tabId = newTab.id;
+      let settled = false;
+
+      const cleanup = () => {
+        chrome.tabs.onUpdated.removeListener(listener);
+        chrome.tabs.remove(tabId).catch(() => {});
+      };
+
+      const finish = (fn) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        fn();
+      };
+
+      const listener = (updatedTabId, info) => {
+        if (updatedTabId === tabId && info.status === 'complete') {
+          // Pequeño delay para que el content script termine de renderizar el header
+          setTimeout(async () => {
+            try {
+              const result = await chrome.tabs.sendMessage(tabId, { action: 'EXTRACT_PROFILE' });
+              finish(() => resolve(result));
+            } catch (e) {
+              finish(() => reject(e));
+            }
+          }, 1500);
+        }
+      };
+
+      chrome.tabs.onUpdated.addListener(listener);
+
+      // Timeout de seguridad
+      setTimeout(() => finish(() => reject(new Error('timeout'))), 15000);
+    });
+  });
+}
+
+// ─── Render resultados del análisis de "seguidos" ─────────────────────────────
+function renderFollowingResults(results) {
+  const container = document.getElementById('following-results');
+
+  if (results.length === 0) {
+    container.innerHTML = `
+      <div class="empty-state" style="padding:16px 8px">
+        <div class="emoji">😕</div>
+        <p>No se pudo analizar ninguna cuenta (puede que sean privadas o que IG haya bloqueado las pestañas).</p>
+      </div>`;
+    return;
+  }
+
+  const formatNum = n => {
+    if (!n) return '0';
+    if (n >= 1000000) return (n/1000000).toFixed(1) + 'M';
+    if (n >= 1000) return (n/1000).toFixed(1) + 'K';
+    return n.toString();
+  };
+
+  const sorted = [...results].sort((a, b) => b.score - a.score);
+
+  container.innerHTML = `
+    <div class="section-title" style="margin-top:14px">Mejores prospectos entre sus seguidos (${results.length} analizados)</div>
+    <div class="prospectos-list scrollable">
+      ${sorted.map(p => `
+        <div class="prospecto-item" data-username="${p.username}">
+          <div class="prospecto-avatar">👤</div>
+          <div class="prospecto-info">
+            <div class="prospecto-username">@${p.username}</div>
+            <div class="prospecto-meta">
+              ${formatNum(p.followers)} seguidores · ${p.posts || 0} posts
+              ${p.emailInBio ? ' · ✉️' : ''}
+              ${p.externalLink ? ' · 🔗' : ''}
+            </div>
+          </div>
+          <div class="prospecto-score" style="background:${(tierColorsGlobal[p.tier] || '#8b5cf6')}22;color:${tierColorsGlobal[p.tier] || '#8b5cf6'};border:1px solid ${(tierColorsGlobal[p.tier] || '#8b5cf6')}44">
+            ${p.score}
+          </div>
+          <div class="prospecto-actions">
+            <button class="btn-icon" title="Abrir perfil" onclick="window.open('${p.profileUrl}', '_blank')">↗</button>
+            <button class="btn-icon" title="Guardar como prospecto" onclick="saveFromFollowingResults('${p.username}')">⚡</button>
+          </div>
+        </div>
+      `).join('')}
+    </div>`;
+
+  // Guardamos los resultados en memoria para poder guardarlos individualmente
+  window.__followingResults = sorted;
+}
+
+// Guardar un prospecto desde la lista de "seguidos analizados"
+async function saveFromFollowingResults(username) {
+  const data = (window.__followingResults || []).find(p => p.username === username);
+  if (!data) return;
+
+  if (prospects.find(p => p.username === username)) {
+    showToast('Ya está en tu lista ✓');
+    return;
+  }
+
+  const prospect = {
+    ...data,
+    ratio: data.following > 0 ? (data.followers / data.following).toFixed(2) : 0,
+    savedAt: new Date().toISOString()
+  };
+
+  prospects.push(prospect);
+  await saveProspects();
+  renderProspectsList();
+  renderExportTab();
+  showToast(`@${username} guardado ✓`);
+}
+
+
 function renderProfileResult(profile, analysis) {
   const tierColors = {
     'HOT 🔥': '#ff4545',
@@ -121,8 +302,8 @@ function renderProfileResult(profile, analysis) {
   };
 
   const ratio = profile.following > 0
-    ? (profile.followers / profile.following).toFixed(1)
-    : '∞';
+      ? (profile.followers / profile.following).toFixed(1)
+      : '∞';
 
   const signalsHTML = analysis.signals.map(s => `
     <div class="signal ${s.type}">
@@ -132,8 +313,8 @@ function renderProfileResult(profile, analysis) {
   `).join('');
 
   const bioShort = profile.bio
-    ? profile.bio.replace(/^\d+[\w,. ]+(Followers?|Following|Posts?)[,\s]+[\d]+[\w,. ]+(Followers?|Following|Posts?)[,\s]+[\d]+[\w,.]*\s*(Followers?|Following|Posts?)[.\s]*/i, '').trim().slice(0, 180)
-    : '';
+      ? profile.bio.replace(/^\d+[\w,. ]+(Followers?|Following|Posts?)[,\s]+[\d]+[\w,. ]+(Followers?|Following|Posts?)[,\s]+[\d]+[\w,.]*\s*(Followers?|Following|Posts?)[.\s]*/i, '').trim().slice(0, 180)
+      : '';
 
   const insightMsg = getInsightMessage(profile, analysis);
 
@@ -143,8 +324,8 @@ function renderProfileResult(profile, analysis) {
         <div class="profile-header">
           <div class="profile-avatar">
             ${profile.profilePic
-              ? `<img src="${profile.profilePic}" alt="avatar" onerror="this.parentNode.innerHTML='👤'" />`
-              : '👤'}
+      ? `<img src="${profile.profilePic}" alt="avatar" onerror="this.parentNode.innerHTML='👤'" />`
+      : '👤'}
           </div>
           <div class="profile-info">
             <div class="profile-username">
@@ -205,11 +386,21 @@ function renderProfileResult(profile, analysis) {
         <button class="btn btn-primary" style="flex:1" id="btn-save-prospect">⚡ Guardar Prospecto</button>
         <button class="btn btn-secondary" id="btn-reanalyze">🔄</button>
       </div>
+
+      <div class="actions" style="margin-top:8px">
+        <button class="btn btn-secondary btn-full" id="btn-analyze-following">🚀 Analizar sus seguidos (buscar mejores prospectos)</button>
+      </div>
+      <p style="font-size:11px;color:var(--text-muted);margin-top:6px;line-height:1.4">
+        Abre la lista de <strong>"seguidos"</strong> de @${profile.username} (haciendo clic en "following" en su perfil) y luego presiona el botón. Vamos a analizar cada cuenta y ordenarlas por potencial.
+      </p>
+
+      <div id="following-results"></div>
     </div>
   `;
 
   document.getElementById('btn-save-prospect').addEventListener('click', saveCurrentProspect);
   document.getElementById('btn-reanalyze').addEventListener('click', analyzeProfile);
+  document.getElementById('btn-analyze-following').addEventListener('click', analyzeFollowingBatch);
 }
 
 // ─── Insight Message ─────────────────────────────────────────────────────────
@@ -246,8 +437,8 @@ async function saveCurrentProspect() {
     score: currentAnalysis.score,
     tier: currentAnalysis.tier,
     ratio: currentProfile.following > 0
-      ? (currentProfile.followers / currentProfile.following).toFixed(2)
-      : 0,
+        ? (currentProfile.followers / currentProfile.following).toFixed(2)
+        : 0,
     savedAt: new Date().toISOString()
   };
 
